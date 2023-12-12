@@ -1,0 +1,53 @@
+variables:
+  SCRIPT_NAME: "s3_event_handler.py"
+  AWS_FUNCTION_HANDLER: "s3_event_handler.handle_s3_update"
+  AWS_FUNCTION_NAME: "S3_backup_notification"
+  DEPLOY_AWS_IMAGE: "amazon/lambda-build-node10.x"
+  ZIP_FOLDER: "package"
+  PACKAGE_FILE_OUTPUT_FOLDER: "output"
+  PACKAGE_FILE_PATH: "$CI_PROJECT_DIR/$PACKAGE_FILE_OUTPUT_FOLDER/package.zip"
+
+stages:
+  - prepare
+  - deploy
+
+AWS Lambda package:
+  image: python:3.11-alpine
+  stage: prepare
+  allow_failure: false
+  only:
+    - branches
+  except:
+    changes:
+      - README.md
+  before_script:
+    - apk update && apk add --no-cache zip
+  script:
+    - echo "Building package for $AWS_FUNCTION_NAME lambda function..."
+    - mkdir $CI_PROJECT_DIR/$ZIP_FOLDER
+    - mkdir $CI_PROJECT_DIR/$PACKAGE_FILE_OUTPUT_FOLDER
+    - pip install -r requirements.txt -t $CI_PROJECT_DIR/$ZIP_FOLDER
+    - cp $SCRIPT_NAME $CI_PROJECT_DIR/$ZIP_FOLDER/$SCRIPT_NAME
+    - cd $CI_PROJECT_DIR/$ZIP_FOLDER
+    - zip -r $PACKAGE_FILE_PATH *
+  artifacts:
+    expire_in: 1 day
+    name: $AWS_FUNCTION_NAME
+    paths:
+      - $PACKAGE_FILE_PATH
+
+Deploy:
+  stage: deploy
+  image: $DEPLOY_AWS_IMAGE
+  only:
+    - branches
+  except:
+    changes:
+      - README.md
+  script:
+    - aws lambda update-function-configuration --function-name $AWS_FUNCTION_NAME --handler $AWS_FUNCTION_HANDLER --environment "Variables={NTFY_BASE_URL=$NTFY_BASE_URL,NTFY_TOPIC_NAME=$NTFY_TOPIC_NAME}"
+    - aws lambda update-function-code --function-name $AWS_FUNCTION_NAME --zip-file fileb://$PACKAGE_FILE_PATH
+  needs:
+    - AWS Lambda package
+  dependencies:
+    - AWS Lambda package
